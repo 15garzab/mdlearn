@@ -1161,7 +1161,10 @@ class MDLearn():
             Assigns inputs to class attributes
         uncertainty(max_tau = 200, n_splits = 2)
             Estimate model uncertainty over extended timescales for application
-        
+        form_koop_op(tau_msm : float = 100)
+            EStimate Koopman operator for the trained model and its predictions
+        spatialplot()
+            Call Scatter3d (described above) to represent eigenstates as probability distributions in cartesian coordinate space
     """
 
     def __init__(
@@ -1169,21 +1172,19 @@ class MDLearn():
         filename: str = None,
         atom1: str = None,
         atom2: str = None,
-        dopant: str = None,
         ):
-       
         self.filename = filename
         self.atom1 = atom1
         self.atom2 = atom2
-        self.dopant = dopant
         # read file with OVITO
         self.pipeline = import_file(filename, sort_particles = True)
         # assume the cell doesn't change from frame to frame
         data = self.pipeline.compute(0)
+        cell = np.array(data.cell)[:3,:3]
         self.cell = np.array(data.cell)[:3,:3]
-        self.lattices = np.repeat(cell.reshape)
-        print('Lattices Array Dimensions:\n')
-        print(lattices.shape)
+        self.lattices = np.repeat(self.cell.reshape((1,3,3)), self.pipeline.source.num_frames, axis = 0)
+        print('Lattices Array Dimensions:')
+        print(self.lattices.shape)
         # access OVITO data like you would in pandas
         self.atom_types = np.array(data.particles['Particle Type'])
         # the gdynet README says to put the atomic number as the type, not the 
@@ -1195,19 +1196,19 @@ class MDLearn():
             self.atom_types[np.where(self.atom_types == 1)] = 29
             self.atom_types[np.where(self.atom_types == 2)] = 28
         
-        print('Atom Types Array Dimension:' + self.atom_types.shape + '\n')
-        print('Atom Types Data Type' + self.atom_types.dtype + '\n')
+        print('Atom Types Array Dimension:' + str(self.atom_types.shape)+'\n')
+        print('Atom Types Data Type' + str(self.atom_types.dtype)+'\n')
         # the movement of Ni dopant is most important and is our target
         self.target_index = np.array(np.where(self.atom_types == 28)).flatten()
-        print('Target Index Shape: ' + self.target_index.shape + '\n')
+        print('Target Index Shape: ' + str(self.target_index.shape)+'\n')
         # bring in the xyz coordinates, reshaping to we can append all the frames together
         traj_coords = np.array(data.particles['Position'])
         self.nparticles = len(traj_coords)
         print('Original shape: ' + str(traj_coords.shape))
-        self.traj_coords = traj_coords.reshape((1,nparticles,3))
+        self.traj_coords = traj_coords.reshape((1,self.nparticles,3))
         print('New shape: ' + str(self.traj_coords.shape))
 
-    def process_data_splits(train_split = 0.6, test_split = 0.3):
+    def process_data_splits(self, train_split = 0.6, test_split = 0.3):
         # this loop takes a while (unfortunately OVITO doesn't go much faster)
         for frame in range(1, self.pipeline.source.num_frames):
             data = self.pipeline.compute(frame)
@@ -1216,20 +1217,20 @@ class MDLearn():
 
         self.train_frame = int(self.pipeline.source.num_frames*train_split)
         self.test_frame = int(self.pipeline.source.num_frames*(train_split + test_split))
-        print('Train frame is ' + self.train_frame + '\n')
-        print('Test frame is ' + self.test_frame + '\n')
+        print('Train frame is ' + str(self.train_frame) + '\n')
+        print('Test frame is ' + str(self.test_frame) + '\n')
         # fun with slicing
         self.train_traj_coords = self.traj_coords[:self.train_frame, :, :]
         self.test_traj_coords = self.traj_coords[self.train_frame:self.test_frame, :, :]
         self.val_traj_coords = self.traj_coords[self.test_frame:,:,:]
         # shape of the new training-testing-validation splits
-        print('Training coordinates shape: ' + self.train_traj_coords.shape + '\n')
-        print('Test coordinates shape: ' + self.test_traj_coords.shape + '\n')
-        print('Validation coordinates shape: ' + self.val_traj_coords.shape + '\n')
+        print('Training coordinates shape: ' + str(self.train_traj_coords.shape) + '\n')
+        print('Test coordinates shape: ' + str(self.test_traj_coords.shape) + '\n')
+        print('Validation coordinates shape: ' + str(self.val_traj_coords.shape) + '\n')
         return None
     
 
-    def compress_arrays(train_name='train-traj', test_name='test-traj', val_name='val-traj'):
+    def compress_arrays(self, train_name='train-traj', test_name='test-traj', val_name='val-traj'):
         """ Compress Arrays
         Compression needed for the model with the appropriate array labels ( slice the lattices to have the same number of frames)
         """
@@ -1248,21 +1249,21 @@ class MDLearn():
         print('Array compression complete! ')
         return None
 
-    def which():
+    def which(self):
         print('python preprocess.py train-traj.npz train-graph.npz')
         return None
 
-    def which_command(n = 4):
+    def which_command(self,n = 4):
         # gives the user a command line hint
         print('python ../../main.py --train-flist train-graph.npz --val-flist val-graph.npz --test-flist test-graph.npz --job-dir ./--n-classes '+str(n))
         return None
 
     ### critical function for post-processing
-    def shape_preds(
+    def shape_preds(self,
         train_dir: str = None,
         n_classes: int = 6,
         time_unit: float = None
-        )
+        ):
         """ Reshape predictions 
         Reshape the predicted trajectories for special atoms into an array indexable by time, # of batches, and # of classes
 
@@ -1291,7 +1292,7 @@ class MDLearn():
         return self.preds.shape
 
     ### all the following are post-processing commands
-    def train_loss(train_dir: str = None):
+    def train_loss(self, train_dir: str = None):
         # no need to create the logs if they already exist
         if not hasattr(self, 'train_logs'): 
             self.train_logs = training_logs(train_dir)
@@ -1304,7 +1305,7 @@ class MDLearn():
         plt.ylabel('VAMP-2 Loss', fontweight='bold')
         return None
     
-    def train_vamp2(train_dir: str = None):
+    def train_vamp2(self, train_dir: str = None):
         if not hasattr(self, 'train_logs'):
             self.train_logs = training_logs(train_dir)
             self.train_dir = train_dir
@@ -1316,7 +1317,7 @@ class MDLearn():
         plt.ylabel('VAMP-2 Score', fontweight='bold')
         return None
 
-    def train_vamp(train_dir str = None):
+    def train_vamp(self, train_dir: str = None):
         if not hasattr(self, 'train_logs'):
             self.train_logs = training_logs(train_dir)
             self.train_dir = train_dir
@@ -1329,53 +1330,58 @@ class MDLearn():
 
     ## the following functions require self.preds to be instantiated so
     ## request some user input 
-    def repair_preds()
-        """ Reshape Predictions For Study If Missed by Accident
-        Reshape the predicted trajectories for special atoms into an array indexable by time, # of batches, and # of classes
-
-        See Also
-        --------
-        shape_preds method above
-        """
-        return self.preds = self.shape_preds(train_dir = self.train_dir, n_classes = self.n_classes, self.time_unit)
-    def pie():
+    def pie(self):
         if not hasattr(self, 'preds'):
             if not hasattr(self, 'train_dir'):
-                self.train_dir = Input('Please input the training directory where outputs are:')
+                self.train_dir = Input('Please input the training directory where your desired outputs are:')
             if not hasattr(self, 'n_classes'):
                 self.n_classes = Input('Please input the number of classes in the GDyNet model you trained:')
             if not hasattr(self, 'time_unit'):
                 self.time_unit = Input('Please input the timestep length in units of nanoseconds:')
-            self.preds = self.shape_preds()
+            self.preds = self.shape_preds(self.train_dir, self.n_classes, self.time_unit)
         
         probs = np.sum(preds, axis=(0,1))
         probs = probs / np.sum(probs)
         plt.figure()
-        plt.pie(probs, labels=labels,autopct='%1.2f%%')
+        plt.pie(probs, labels=labels, autopct='%1.2f%%')
         plt.axis('image')
-        plt.title('Population of States' fontweight='bold')
+        plt.title('Population of States', fontweight='bold')
         plt.show()
         return None
 
-    def uncertainty(max_tau : float = 200, n_splits : int = 2):
+    def uncertainty(self, max_tau : float = 200, n_splits : int = 2):
         if not hasattr(self, 'preds'):
             self.preds = self.repair_preds()
-            
+            if not hasattr(self, 'train_dir'):
+                self.train_dir = Input('Please input the training directory where your desired outputs are:')
+            if not hasattr(self, 'n_classes'):
+                self.n_classes = Input("Please input the number of classes in the GDyNet model you trained:")
+            if not hasattr(self, 'time_unit'):
+                self.time_unit = Input('Please input the timestep length in units of nanoseconds:')
+            self.preds = self.shape_preds(self.train_dir, self.n_classes, self.time_unit)
+        
         lag = np.arange(1, max_tau, n_splits)
         plot_timescales(self.preds, lag, n_splits=n_splits, split_axis=0,time_unit_in_ns=self.time_unit)
         return None
 
-    def ck_tests(tau_msm : float = 100):
+    def ck_tests(self, tau_msm : float = 100):
         """ Chapman-Kolmogorov Tests
             I don't really know what this is yet oops 
         """
         if not hasattr(self, 'preds'):
             self.preds = self.repair_preds()
+            if not hasattr(self, 'train_dir'):
+                self.train_dir = Input('Please input the training directory where your desired outputs are:')
+            if not hasattr(self, 'n_classes'):
+                self.n_classes = Input("Please input the number of classes in the GDyNet model you trained:")
+            if not hasattr(self, 'time_unit'):
+                self.time_unit = Input('Please input the timestep length in units of nanoseconds:')
+            self.preds = self.shape_preds(self.train_dir, self.n_classes, self.time_unit)
         plot_ck_tests(self.preds, tau_msm=tau_msm, step=10, n_splits=4, split_axis=0, time_unit_in_ns=self.time_unit)
         plt.suptitle('CK Tests for Koopman Model with n_classes = ' + str(self.n_classes))
         return None
 
-    def form_koop_op(tau_msm : float = 100):
+    def form_koop_op(self, tau_msm : float = 100):
         """Estimate Koopman Operator
         Estimate the Koopman operator and its eigenvstuff. Sets multiple attributes for the class instance
         
@@ -1388,20 +1394,28 @@ class MDLearn():
         ------
         Plot of the eigenvalues and their transitions
         """
-        self.tau_msm = tau_msm
         if not hasattr(self, 'preds'):
             self.preds = self.repair_preds()
+            if not hasattr(self, 'train_dir'):
+                self.train_dir = Input('Please input the training directory where your desired outputs are:')
+            if not hasattr(self, 'n_classes'):
+                self.n_classes = Input("Please input the number of classes in the GDyNet model you trained:")
+            if not hasattr(self, 'time_unit'):
+                self.time_unit = Input('Please input the timestep length in units of nanoseconds:')
+            self.preds = self.shape_preds(self.train_dir, self.n_classes, self.time_unit)
+        
+        self.tau_msm = tau_msm
         self.koopman_op = estimate_koopman_op(self.preds, self.tau_msm)
         self.eigvals, self.eigvecs = np.linalg.eig(self.koopman_op.T)
         for i, eigval in sorted(enumerate(self.eigvals), key=lambda x: x[1], reverse=True):
-        print('Eig {}'.format(i))
-        print('Value:', eigval)
-        print('Timescale: {} ns'.format(-self.tau_msm / np.log(np.abs(eigval)) * time_unit_in_ns))
-        print('Vector:', self.eigvecs[:, i])
-        plot_eigvals(self.eigvecs[:, i])
+            print('Eig {}'.format(i))
+            print('Value:', eigval)
+            print('Timescale: {} ns'.format(-self.tau_msm / np.log(np.abs(eigval)) * time_unit_in_ns))
+            print('Vector:', self.eigvecs[:, i])
+            plot_eigvals(self.eigvecs[:, i])
         return None
 
-    def spatialplot():
+    def spatialplot(self):
         for i in range(self.n_classes):
             scatter3d(self.traj_coords[::50, 0, 0], self.traj_coords[::50, 0, 1], self.traj_coords[::50, 0, 2],
                     cs=self.preds.reshape(-1, self.n_classes)[::50, i], title='State' + str(i),
