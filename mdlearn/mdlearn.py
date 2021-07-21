@@ -1,18 +1,30 @@
 import os
 import matplotlib.pyplot as plt
-
+from matplotlib import colors
+import matplotlib.cm as cmx
+from mpl_toolkits.mplot3d import Axes3D
 import numpy as np
 import pandas as pd
 import tensorflow as tf
 from ovito.io import import_file
 
-def training_logs(path: str = None):
+# authors = {Burke Garza (current edits for personal use), Xie, Tian and France-Lanord, Arthur and Wang, Yanming and #Shao-Horn, Yang and Grossman, Jeffrey C.}
+
+# helper function adapted from gdynet/visualization.ipynb
+def training_logs(train_dir: str = None):
     """ Retrieve Training Logs
     Retrieve training logs of the loss and VAMP scores for validation and training over the epochs run
-    Args:
-        path: (str) File path to directory containing GDyNet training outputs
+    
+    Parameters
+    ----------
+    train_dir : str
+        File path to directory containing GDyNet training outputs
+
+    Returns
+    -------
+    train_logs : pandas dataframe formed from outputs in train_{i}.log files
     """
-    os.chdir(path)
+    os.chdir(train_dir)
     train_logs = []
     for i in range(3):
         try:
@@ -21,6 +33,30 @@ def training_logs(path: str = None):
             pass
     train_logs = pd.concat(train_logs, ignore_index=True)
     return train_logs
+
+def scatter3d(x,y,z, cs, title, colorsMap='bwr', angle=30):
+    """ Scatter3D
+        XYZ plotting of eigenstate probability densities with 3D heatmap.
+        Adapted from gdynet/visualization.ipynb
+        
+        Parameters
+        ----------
+        xyz : ndarrays
+            NumPy arrays containing periodic, cartesian trajectory coordinates
+        colorsMap : str
+            Matplotlib divergent color code for probability heatmap
+    """
+    cm = plt.get_cmap(colorsMap)
+    cNorm = matplotlib.colors.Normalize(vmin=min(cs), vmax=max(cs))
+    scalarMap = cmx.ScalarMappable(norm=cNorm, cmap=cm)
+    fig = plt.figure(figsize=(4.2, 3.2))
+    ax = Axes3D(fig)
+    ax.scatter(x, y, z, s=15, c=scalarMap.to_rgba(cs)[:len(x)], marker='o', alpha=0.8)
+    scalarMap.set_array(cs)
+    ax.view_init(10, angle)
+    fig.colorbar(scalarMap)
+    plt.title(title)
+    plt.show()
 
 # useful class to show what VAMPNets do at the fundamental level, outputs koopman operator for 'plot_timescales' and 'plot_ck_tests'
 # from gdynet/vampnet.py, author = {Xie, Tian and France-Lanord, Arthur and Wang, Yanming and Shao-Horn, Yang and Grossman, Jeffrey C.},
@@ -1105,6 +1141,27 @@ class MDLearn():
     Takes an input file to OVITO and converts the coordinates to numpy arrays,
     then to graphs as compressed .npz files with training, validation, and
     testing separation.
+
+        Attributes
+        ----------
+            filename : str
+                Name of OVITO-readable file including extension
+            atom1 : str
+                Atomic symbol (case-sensitive) represented as Type 1
+            atom2 : str
+                Atomic symbol (case-sensitive) represented as Type 2
+
+        Methods
+        -------
+        process_data_splits(train_split = 0.6, test_split = 0.3)
+            Split dataset into training, testing, validation portions with validation percent found from remainder implicitly
+        compress_arrays(train_name, test_name, val_name)
+            Compress arrays into .npz files for smaller data footprint
+        shape_preds(train_dir, n_classes, time_unit)
+            Assigns inputs to class attributes
+        uncertainty(max_tau = 200, n_splits = 2)
+            Estimate model uncertainty over extended timescales for application
+        
     """
 
     def __init__(
@@ -1114,12 +1171,7 @@ class MDLearn():
         atom2: str = None,
         dopant: str = None,
         ):
-        """
-        Args:
-            filename:
-            atom1: (str) Atomic symbol (case-sensitive) represented as Type 1 in data
-            atom2: (str) Atomic symbol (case-sensitive) represented as Type  in data
-        """
+       
         self.filename = filename
         self.atom1 = atom1
         self.atom2 = atom2
@@ -1172,13 +1224,15 @@ class MDLearn():
         self.val_traj_coords = self.traj_coords[self.test_frame:,:,:]
         # shape of the new training-testing-validation splits
         print('Training coordinates shape: ' + self.train_traj_coords.shape + '\n')
-        print('Test corodinates shape: ' + self.test_traj_coords.shape + '\n')
+        print('Test coordinates shape: ' + self.test_traj_coords.shape + '\n')
         print('Validation coordinates shape: ' + self.val_traj_coords.shape + '\n')
         return None
     
 
     def compress_arrays(train_name='train-traj', test_name='test-traj', val_name='val-traj'):
-        # compression requested for the model with the appropriate array labels (don't forget to slice the lattices too to have the same number of frames)
+        """ Compress Arrays
+        Compression needed for the model with the appropriate array labels ( slice the lattices to have the same number of frames)
+        """
         # training data
         np.savez_compressed(train_name, traj_coords=self.train_traj_coords,
         lattices=self.lattices[:self.train_frame, :, :],
@@ -1192,9 +1246,9 @@ class MDLearn():
         lattices=self.lattices[self.test_frame:, :, :],
         atom_types=self.atom_types, target_index=self.target_index)
         print('Array compression complete! ')
-        return
+        return None
 
-    def convert_graphs():
+    def which():
         print('python preprocess.py train-traj.npz train-graph.npz')
         return None
 
@@ -1203,17 +1257,153 @@ class MDLearn():
         print('python ../../main.py --train-flist train-graph.npz --val-flist val-graph.npz --test-flist test-graph.npz --job-dir ./--n-classes '+str(n))
         return None
 
-    # all the following are post-processing commands
-    def train_stats(path: str = None,):
+    ### critical function for post-processing
+    def shape_preds(
+        train_dir: str = None,
+        n_classes: int = 6,
+        time_unit: float = None
+        )
+        """ Reshape predictions 
+        Reshape the predicted trajectories for special atoms into an array indexable by time, # of batches, and # of classes
+
+        Parameters
+        ----------
+            train_dir : str
+                directory path to location of model training run
+            n_classes : int
+                number of classes to distinguish eigenstates
+            time_unit : float
+                **IMPORTANT** units of the simulation timestep in NANOSECONDS
+        """
+        self.train_dir = train_dir
+        self.n_classes = n_classes
+        self.time_unit = time_unit
+        preds = np.load(self.train_dir)
+        # preds has shape (num_trajs,num_frames, num_atoms, n_classes)
+        preds.shape
+        # n_clases parameter chosen at the start of training for natom types
+        preds = np.transpose(preds, (1,0,2,3))
+        F = preds.shape[0]
+        # set internal object attribute for this training run and analysis
+        self.preds = preds.reshape(F, -1 , self.n_classes)
+        # preds has shape (num_frames, n_batches, n_classes)
+        print('You set n_classes equal to ' + str(self.n_classes) + '\n')
+        return self.preds.shape
+
+    ### all the following are post-processing commands
+    def train_loss(train_dir: str = None):
         # no need to create the logs if they already exist
-        if train_logs in local():
-            pass
-        else: 
-            train_logs = training_logs(path)
+        if not hasattr(self, 'train_logs'): 
+            self.train_logs = training_logs(train_dir)
+            self.train_dir = train_dir
         plt.rcParams['font.weight'] = 'bold' 
         plt.rcParams['axes.labelweight'] = 'bold'
-        train_logs.plot.line(y=['loss', 'val_loss'])
+        self.train_logs.plot.line(y=['loss', 'val_loss'])
         plt.title('Training and Validation Loss for 3-Stage Training', fontweight='bold')
         plt.xlabel('Epochs', fontweight ='bold')
         plt.ylabel('VAMP-2 Loss', fontweight='bold')
-        # no need to
+        return None
+    
+    def train_vamp2(train_dir: str = None):
+        if not hasattr(self, 'train_logs'):
+            self.train_logs = training_logs(train_dir)
+            self.train_dir = train_dir
+        plt.rcParams['font.weight'] = 'bold' 
+        plt.rcParams['axes.labelweight'] = 'bold'
+        self.train_logs.plot.line(y=['metric_VAMP2', 'val_metric_VAMP2'])
+        plt.title('VAMP-2 Training/Validation Scores', fontweight = 'bold')
+        plt.xlabel('Epochs', fontweight='bold')
+        plt.ylabel('VAMP-2 Score', fontweight='bold')
+        return None
+
+    def train_vamp(train_dir str = None):
+        if not hasattr(self, 'train_logs'):
+            self.train_logs = training_logs(train_dir)
+            self.train_dir = train_dir
+        plt.rcParams['font.weight'] = 'bold' 
+        plt.rcParams['axes.labelweight'] = 'bold'
+        self.train_logs.plot.line(y=['metric_VAMP', 'val_metric_VAMP'])
+        plt.title('VAMP Training/Validation Scores', fontweight='bold')
+        plt.xlabel('Epochs', fontweight ='bold')
+        plt.ylabel('VAMP Score', fontweight='bold')
+
+    ## the following functions require self.preds to be instantiated so
+    ## request some user input 
+    def repair_preds()
+        """ Reshape Predictions For Study If Missed by Accident
+        Reshape the predicted trajectories for special atoms into an array indexable by time, # of batches, and # of classes
+
+        See Also
+        --------
+        shape_preds method above
+        """
+        return self.preds = self.shape_preds(train_dir = self.train_dir, n_classes = self.n_classes, self.time_unit)
+    def pie():
+        if not hasattr(self, 'preds'):
+            if not hasattr(self, 'train_dir'):
+                self.train_dir = Input('Please input the training directory where outputs are:')
+            if not hasattr(self, 'n_classes'):
+                self.n_classes = Input('Please input the number of classes in the GDyNet model you trained:')
+            if not hasattr(self, 'time_unit'):
+                self.time_unit = Input('Please input the timestep length in units of nanoseconds:')
+            self.preds = self.shape_preds()
+        
+        probs = np.sum(preds, axis=(0,1))
+        probs = probs / np.sum(probs)
+        plt.figure()
+        plt.pie(probs, labels=labels,autopct='%1.2f%%')
+        plt.axis('image')
+        plt.title('Population of States' fontweight='bold')
+        plt.show()
+        return None
+
+    def uncertainty(max_tau : float = 200, n_splits : int = 2):
+        if not hasattr(self, 'preds'):
+            self.preds = self.repair_preds()
+            
+        lag = np.arange(1, max_tau, n_splits)
+        plot_timescales(self.preds, lag, n_splits=n_splits, split_axis=0,time_unit_in_ns=self.time_unit)
+        return None
+
+    def ck_tests(tau_msm : float = 100):
+        """ Chapman-Kolmogorov Tests
+            I don't really know what this is yet oops 
+        """
+        if not hasattr(self, 'preds'):
+            self.preds = self.repair_preds()
+        plot_ck_tests(self.preds, tau_msm=tau_msm, step=10, n_splits=4, split_axis=0, time_unit_in_ns=self.time_unit)
+        plt.suptitle('CK Tests for Koopman Model with n_classes = ' + str(self.n_classes))
+        return None
+
+    def form_koop_op(tau_msm : float = 100):
+        """Estimate Koopman Operator
+        Estimate the Koopman operator and its eigenvstuff. Sets multiple attributes for the class instance
+        
+        Parameters
+        ----------
+        tau_msm : (float)
+            Tau for the Markov model to be formed from the eigenvalues
+
+        Return
+        ------
+        Plot of the eigenvalues and their transitions
+        """
+        self.tau_msm = tau_msm
+        if not hasattr(self, 'preds'):
+            self.preds = self.repair_preds()
+        self.koopman_op = estimate_koopman_op(self.preds, self.tau_msm)
+        self.eigvals, self.eigvecs = np.linalg.eig(self.koopman_op.T)
+        for i, eigval in sorted(enumerate(self.eigvals), key=lambda x: x[1], reverse=True):
+        print('Eig {}'.format(i))
+        print('Value:', eigval)
+        print('Timescale: {} ns'.format(-self.tau_msm / np.log(np.abs(eigval)) * time_unit_in_ns))
+        print('Vector:', self.eigvecs[:, i])
+        plot_eigvals(self.eigvecs[:, i])
+        return None
+
+    def spatialplot():
+        for i in range(self.n_classes):
+            scatter3d(self.traj_coords[::50, 0, 0], self.traj_coords[::50, 0, 1], self.traj_coords[::50, 0, 2],
+                    cs=self.preds.reshape(-1, self.n_classes)[::50, i], title='State' + str(i),
+                    angle=18)
+        return None
